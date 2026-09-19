@@ -13,7 +13,25 @@ Système complet de détection de fraude en ligne combinant **Machine Learning**
 - ✅ Interface web interactive (React + Tailwind)
 - ✅ Analyse par lot (batch de 100 transactions)
 
----
+## 📸 Aperçu
+
+### 🖥️ Interface de détection
+
+Interface web permettant de saisir une transaction et de visualiser instantanément le score de risque.
+
+![Interface de détection](./docs/screenshot-interface.png)
+
+### 🔍 Explications SHAP
+
+Chaque décision est accompagnée de ses facteurs explicatifs, permettant à l'analyste de comprendre pourquoi la transaction a été jugée suspecte.
+
+![Explications SHAP](./docs/screenshot-shap.png)
+
+### 📖 Documentation API (Swagger)
+
+API auto-documentée avec FastAPI, permettant de tester tous les endpoints directement depuis le navigateur.
+
+![Documentation Swagger](./docs/screenshot-swagger.png)
 
 ## 🏗️ Architecture
 
