@@ -1,93 +1,132 @@
+import os
 import joblib
 import pandas as pd
 import numpy as np
 import shap
 
+MODELS_DIR = "models"
+
+
 class FraudDetector:
     def __init__(self):
-        self.model = joblib.load('fraud_model.pkl')
-        self.encoders = joblib.load('encoders.pkl')
-        self.features = self.encoders['features']
-        self.explainer = shap.TreeExplainer(self.model)
-        print("✅ Modèle et explainer SHAP chargés")
+        # Charger les encodeurs et métadonnées
+        encoders = joblib.load(os.path.join(MODELS_DIR, "encoders.pkl"))
+        self.encoders = encoders
+        self.le_pays_carte = encoders['le_pays_carte']
+        self.le_pays_ip = encoders['le_pays_ip']
+        self.le_type = encoders['le_type']
+        self.features = encoders['features']
+        self.scaler = encoders['scaler']
+        self.best_model_name = encoders['best_model_name']
+        self.use_scaled = encoders['use_scaled']
+
+        # Charger le meilleur modèle
+        filename = self.best_model_name.lower().replace(" ", "_") + ".pkl"
+        self.model = joblib.load(os.path.join(MODELS_DIR, filename))
+
+        print(f"✅ Modèle chargé : {self.best_model_name}")
+        print(f"   Normalisation : {'OUI' if self.use_scaled else 'NON'}")
+
+        # SHAP uniquement pour les modèles basés sur les arbres
+        self.supports_shap = self.best_model_name in ["Random Forest", "XGBoost"]
+        if self.supports_shap:
+            try:
+                self.explainer = shap.TreeExplainer(self.model)
+                print("   ✅ Explicabilité SHAP activée")
+            except Exception as e:
+                print(f"   ⚠️ SHAP désactivé : {e}")
+                self.supports_shap = False
+        else:
+            print(f"   ⚠️ SHAP non supporté pour {self.best_model_name}")
 
     def _preprocess(self, transaction: dict) -> pd.DataFrame:
-        """Transforme une transaction brute en features pour le modèle."""
+        """Transforme une transaction brute en features."""
+
+        titre("📥", "ÉTAPE 1 — DONNÉE BRUTE")
+        for k, v in transaction.items():
+            print(f"   {k:30s} = {v}")
+
         df = pd.DataFrame([transaction])
-        
-        def safe_transform(le, value):
+
+        # Encodage
+        titre("🔄", "ÉTAPE 2 — ENCODAGE")
+        def safe_transform(le, value, nom):
             try:
-                return le.transform([value])[0]
+                r = le.transform([value])[0]
+                print(f"   {nom:25s} '{value}' → {r}")
+                return r
             except ValueError:
+                print(f"   {nom:25s} '{value}' → -1 (inconnu)")
                 return -1
-        
-        df['pays_carte_enc'] = safe_transform(self.encoders['le_pays_carte'], transaction['pays_carte'])
-        df['pays_ip_enc'] = safe_transform(self.encoders['le_pays_ip'], transaction['pays_ip'])
-        df['type_marchand_enc'] = safe_transform(self.encoders['le_type'], transaction['type_marchand'])
-        
+
+        df['pays_carte_enc'] = safe_transform(self.le_pays_carte, transaction['pays_carte'], "pays_carte")
+        df['pays_ip_enc'] = safe_transform(self.le_pays_ip, transaction['pays_ip'], "pays_ip")
+        df['type_marchand_enc'] = safe_transform(self.le_type, transaction['type_marchand'], "type_marchand")
+
+        # Feature engineering
+        titre("🧬", "ÉTAPE 3 — FEATURE ENGINEERING")
         df['pays_different'] = int(transaction['pays_carte'] != transaction['pays_ip'])
         df['montant_log'] = np.log1p(transaction['montant'])
         df['heure_suspecte'] = int(transaction['heure'] in [1, 2, 3, 4, 5, 23])
-        
-        return df[self.features]
+        print(f"   pays_different  = {df['pays_different'][0]}")
+        print(f"   montant_log     = {df['montant_log'][0]:.4f}")
+        print(f"   heure_suspecte  = {df['heure_suspecte'][0]}")
 
-    def _extract_shap_values(self, shap_values, X):
-        """
-        Extrait un vecteur 1D de valeurs SHAP pour la classe 'fraude'.
-        Gère toutes les formes possibles retournées par SHAP.
-        """
-        sv = shap_values
-        
-        # Cas 1 : liste de deux arrays (ancien format binaire)
-        if isinstance(sv, list):
-            sv = sv[1]  # classe fraude
-        
-        # Cas 2 : array 3D (nouveau format SHAP >= 0.40)
-        if isinstance(sv, np.ndarray) and sv.ndim == 3:
-            # shape (n_samples, n_features, n_classes) -> on prend la classe 1
-            sv = sv[:, :, 1]
-        
-        # Cas 3 : array 2D (n_samples, n_features) -> on prend la première ligne
-        if isinstance(sv, np.ndarray) and sv.ndim == 2:
-            sv = sv[0]
-        
-        # Maintenant sv doit être 1D de longueur = nombre de features
-        sv = np.array(sv).flatten()
-        
-        # Sécurité : s'assurer que la taille correspond
-        if len(sv) != len(self.features):
-            raise ValueError(
-                f"Taille SHAP ({len(sv)}) != nombre de features ({len(self.features)})"
-            )
-        
-        return sv
+        # Vecteur final
+        X = df[self.features]
+        titre("🎯", "ÉTAPE 4 — VECTEUR FINAL")
+        print(f"   {X.values[0].tolist()}")
+
+        # Normalisation si nécessaire
+        if self.use_scaled:
+            titre("📏", "ÉTAPE 5 — NORMALISATION (StandardScaler)")
+            X_scaled = self.scaler.transform(X)
+            X = pd.DataFrame(X_scaled, columns=self.features)
+            print(f"   Vecteur normalisé : {X.values[0].tolist()}")
+
+        return X
 
     def predict(self, transaction: dict) -> dict:
-        """Prédit le score de fraude et génère les explications SHAP."""
         X = self._preprocess(transaction)
-        
-        # --- Prédiction ---
+
+        # Prédiction
+        titre("🧠", f"PRÉDICTION — {self.best_model_name}")
         proba = float(self.model.predict_proba(X)[0][1])
         is_fraud = proba > 0.5
-        
-        # --- Explicabilité SHAP ---
-        try:
-            shap_values = self.explainer.shap_values(X)
-            sv = self._extract_shap_values(shap_values, X)
-            
-            # Créer la liste (feature, impact) et trier
-            feature_importance = list(zip(self.features, [float(v) for v in sv]))
-            feature_importance.sort(key=lambda x: abs(x[1]), reverse=True)
-            
-        except Exception as e:
-            print(f"⚠️ Erreur SHAP : {e}")
-            feature_importance = [(f, 0.0) for f in self.features]
-        
-        # --- Explications lisibles ---
-        explanations = self._generate_explanations(
-            transaction, feature_importance[:5]
-        )
-        
+        print(f"   Score : {proba:.4f} ({proba*100:.2f}%)")
+        print(f"   Décision : {'🚨 FRAUDE' if is_fraud else '✅ SÛRE'}")
+
+        # SHAP (si supporté)
+        feature_importance = [(f, 0.0) for f in self.features]
+
+        if self.supports_shap:
+            titre("🔍", "EXPLICABILITÉ (SHAP)")
+            try:
+                shap_values = self.explainer.shap_values(X)
+                sv = shap_values
+                if isinstance(sv, list):
+                    sv = sv[1]
+                if isinstance(sv, np.ndarray) and sv.ndim == 3:
+                    sv = sv[:, :, 1]
+                if isinstance(sv, np.ndarray) and sv.ndim == 2:
+                    sv = sv[0]
+                sv = np.array(sv).flatten()
+
+                feature_importance = list(zip(self.features, [float(v) for v in sv]))
+                feature_importance.sort(key=lambda x: abs(x[1]), reverse=True)
+
+                for f, v in feature_importance[:5]:
+                    signe = "🔴" if v > 0 else "🟢"
+                    print(f"   {signe}  {f:28s} : {v:+.4f}")
+            except Exception as e:
+                print(f"   ⚠️ Erreur SHAP : {e}")
+
+        # Explications
+        titre("📝", "EXPLICATIONS LISIBLES")
+        explanations = self._generate_explanations(feature_importance[:5])
+        for e in explanations:
+            print(f"   {e}")
+
         return {
             'score_risque': proba,
             'est_fraude': is_fraud,
@@ -97,40 +136,41 @@ class FraudDetector:
                 for f, v in feature_importance[:5]
             ]
         }
-    
-    def _generate_explanations(self, transaction, top_features):
-        """Convertit les valeurs SHAP en phrases lisibles."""
-        explications = []
+
+    def _generate_explanations(self, top_features):
         labels = {
-            'montant': 'Montant de la transaction',
+            'montant': 'Montant',
             'montant_log': 'Montant (log)',
-            'heure': 'Heure de la transaction',
-            'heure_suspecte': 'Heure suspecte (nuit)',
-            'pays_carte_enc': 'Pays de la carte',
-            'pays_ip_enc': 'Pays de l\'IP',
-            'type_marchand_enc': 'Type de marchand',
-            'pays_different': 'Incohérence pays carte/IP',
-            'nb_tentatives': 'Nombre de tentatives',
-            'anciennete_client_jours': 'Ancienneté du client',
-            'distance_km': 'Distance géographique',
-            'utilisation_vpn': 'Utilisation d\'un VPN'
+            'heure': 'Heure',
+            'heure_suspecte': 'Heure suspecte',
+            'pays_carte_enc': 'Pays carte',
+            'pays_ip_enc': 'Pays IP',
+            'type_marchand_enc': 'Type marchand',
+            'pays_different': 'Incohérence pays',
+            'nb_tentatives': 'Tentatives',
+            'anciennete_client_jours': 'Ancienneté client',
+            'distance_km': 'Distance',
+            'utilisation_vpn': 'VPN'
         }
-        
+        explications = []
         for feature, impact in top_features:
             if abs(impact) < 0.01:
                 continue
             direction = "augmente" if impact > 0 else "diminue"
             signe = "🔴" if impact > 0 else "🟢"
             label = labels.get(feature, feature)
-            explications.append(
-                f"{signe} {label} {direction} le risque (impact: {impact:+.3f})"
-            )
-        
+            explications.append(f"{signe} {label} {direction} le risque ({impact:+.3f})")
+
         if not explications:
-            explications.append("✅ Aucun facteur de risque significatif détecté")
-        
+            explications.append("✅ Aucun facteur de risque significatif")
+
         return explications
 
 
-# Instance globale
+def titre(emoji, texte):
+    print("\n" + "=" * 60)
+    print(f"{emoji}  {texte}")
+    print("=" * 60)
+
+
 detector = FraudDetector()

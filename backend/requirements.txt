@@ -1,0 +1,26 @@
+# === API ===
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+
+# === Machine Learning ===
+scikit-learn
+xgboost
+pandas
+numpy
+joblib
+shap
+
+# === Génération de données ===
+faker
+
+# === Sécurité & Auth ===
+python-jose[cryptography]
+passlib[bcrypt]
+
+# === Utilitaires ===
+python-dotenv
+colorama
+tabulate
