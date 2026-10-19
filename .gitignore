@@ -9,15 +9,6 @@ env/
 ENV/
 .venv/
 
-# Modèles ML (trop volumineux)
-*.pkl
-*.h5
-*.joblib
-
-# Datasets
-*.csv
-!requirements.csv
-
 # ============ Node / React ============
 node_modules/
 dist/

@@ -19,17 +19,31 @@ app = FastAPI(
     description="API de détection de fraude e-commerce basée sur le Machine Learning et l'explicabilité SHAP",
 )
 
+# ==========================================
+# CONFIGURATION CORS & SÉCURITÉ (RENDER)
+# ==========================================
+# Récupération des variables d'environnement (avec valeurs par défaut pour le local)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+API_KEY_DEMO = os.getenv("API_KEY_DEMO", "demo-key-12345")
+API_KEY_ADMIN = os.getenv("API_KEY_ADMIN", "admin-key-67890")
+
+# On autorise le local ET l'URL de production (Vercel)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        FRONTEND_URL  # <-- Accepte l'URL de Vercel en production
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Clés API lues depuis l'environnement
 API_KEYS = {
-    "demo-key-12345": "client_demo",
-    "admin-key-67890": "client_admin"
+    API_KEY_DEMO: "client_demo",
+    API_KEY_ADMIN: "client_admin"
 }
 
 async def verify_api_key(x_api_key: str = Header(..., description="Clé API du client")):
@@ -39,7 +53,9 @@ async def verify_api_key(x_api_key: str = Header(..., description="Clé API du c
     return API_KEYS[x_api_key]
 
 
-# --- Modèles Pydantic ---
+# ==========================================
+# MODÈLES PYDANTIC
+# ==========================================
 class Transaction(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
@@ -134,7 +150,7 @@ async def analyser_transaction(transaction: Transaction, client: str = Depends(v
 
 
 # ==========================================
-# ENDPOINTS POUR LES MODÈLES (NOUVEAU)
+# ENDPOINTS POUR LES MODÈLES (COMPARAISON)
 # ==========================================
 
 @app.get("/api/v1/models/comparison", tags=["Modèles"])
